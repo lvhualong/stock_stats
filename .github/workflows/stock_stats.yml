@@ -14,6 +14,9 @@ on:
   # 也可在 commit message 带 [build] 触发
   push:
 
+permissions:
+  contents: write   # 允许 GITHUB_TOKEN 把 info/ 结果 commit 推回仓库
+
 jobs:
   analyze:
     runs-on: ubuntu-latest
