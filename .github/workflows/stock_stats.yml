@@ -1,0 +1,54 @@
+name: A股每日分析推送
+
+on:
+  schedule:
+    # GitHub cron 是 UTC。A股 15:00 收盘(北京时间)= 07:00 UTC。
+    # 收盘后 15:35 北京时间 = 07:35 UTC,周一到周五运行。
+    - cron: '35 7 * * 1-5'
+  # 支持手动触发,方便调试
+  workflow_dispatch:
+  # 也可在 commit message 带 [build] 触发
+  push:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'schedule'
+      || github.event_name == 'workflow_dispatch'
+      || contains(github.event.head_commit.message, '[build]')
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.ACTION_TOKEN || github.token }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run analyses
+        env:
+          WECOM_WEBHOOK: ${{ secrets.WECOM_WEBHOOK }}
+          TZ: Asia/Shanghai
+        run: |
+          # 任一脚本失败不应阻断其它脚本与后续 commit
+          python watchlist_stats.py || echo "watchlist_stats failed"
+          python market_stats.py    || echo "market_stats failed"
+          python hotlist_stats.py   || echo "hotlist_stats failed"
+
+      - name: Commit results
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add info/
+          # 无变化则不提交,避免空提交导致 job 失败
+          git diff --staged --quiet || git commit -m "stock_stats auto update $(date +'%Y-%m-%d %H:%M %Z')"
+          git push
