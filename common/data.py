@@ -53,16 +53,46 @@ def safe(default_factory):
 # ---------------------------------------------------------------------------
 # 全市场实时行情快照(很多榜单都从这里派生,缓存一次复用)
 # ---------------------------------------------------------------------------
-_SPOT_CACHE = {"df": None}
+_SPOT_CACHE = {"df": None, "src": None}
+
+
+@retry()
+def _spot_em():
+    """东方财富全市场快照(主源,字段最全,含换手率)。"""
+    return ak.stock_zh_a_spot_em()
+
+
+@retry()
+def _spot_sina():
+    """新浪全市场快照(兜底源)。代码带 sh/sz/bj 前缀,无换手率,这里做归一化。"""
+    df = ak.stock_zh_a_spot()
+    if df is None or df.empty:
+        return None
+    df = df.copy()
+    df["代码"] = df["代码"].astype(str).str.replace(r"^(sh|sz|bj)", "", regex=True)
+    return df
 
 
 @safe(pd.DataFrame)
-@retry()
 def get_spot_all():
-    """A 股全市场实时行情快照(东方财富)。一次会话内缓存复用。"""
-    if _SPOT_CACHE["df"] is None:
-        _SPOT_CACHE["df"] = ak.stock_zh_a_spot_em()
-    return _SPOT_CACHE["df"]
+    """A 股全市场实时行情快照,一次会话内缓存复用。
+
+    东方财富为主源;失败时自动切换新浪源兜底,避免整轮榜单为空。
+    两源都归一到含 代码/名称/最新价/涨跌幅/成交额 的列(新浪无换手率)。
+    """
+    cached = _SPOT_CACHE["df"]
+    if cached is not None and not cached.empty:
+        return cached
+
+    df, src = _spot_em(), "eastmoney"
+    if df is None or df.empty:
+        print("[data] 东方财富快照失败,切换新浪源兜底")
+        df, src = _spot_sina(), "sina"
+
+    if df is not None and not df.empty:
+        _SPOT_CACHE["df"], _SPOT_CACHE["src"] = df, src
+        return df
+    return pd.DataFrame()
 
 
 @safe(dict)
